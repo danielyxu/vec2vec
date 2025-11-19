@@ -180,3 +180,106 @@ class RelativisticGAN(VanillaGAN):
         gen_acc = (d_real_logits > d_fake_logits).float().mean().item()
         self.discriminator.train()
         return gen_loss, gen_acc
+
+
+class WassersteinGAN(VanillaGAN):
+    """Wasserstein GAN with Gradient Penalty (WGAN-GP).
+
+    Uses Wasserstein distance estimation with gradient penalty
+    to enforce Lipschitz constraint on the critic.
+    """
+
+    def compute_wgan_gradient_penalty(self, real_data: torch.Tensor, fake_data: torch.Tensor) -> torch.Tensor:
+        """Compute gradient penalty for WGAN-GP.
+
+        Interpolates between real and fake samples, computes critic output,
+        and penalizes deviation of gradient norm from 1.
+        """
+        batch_size = real_data.size(0)
+        device = real_data.device
+
+        # Random interpolation coefficient
+        epsilon = torch.rand(batch_size, 1, device=device)
+
+        # Interpolate between real and fake
+        interpolated = epsilon * real_data + (1 - epsilon) * fake_data
+        interpolated = interpolated.requires_grad_(True)
+
+        # Get critic output for interpolated samples
+        d_interpolated = self.discriminator(interpolated)
+
+        # Compute gradients
+        gradients = torch.autograd.grad(
+            outputs=d_interpolated,
+            inputs=interpolated,
+            grad_outputs=torch.ones_like(d_interpolated),
+            create_graph=True,
+            retain_graph=True,
+        )[0]
+
+        # Compute gradient penalty: (||grad||_2 - 1)^2
+        gradients = gradients.view(batch_size, -1)
+        gradient_norm = gradients.norm(2, dim=1)
+        gradient_penalty = ((gradient_norm - 1) ** 2).mean()
+
+        return gradient_penalty
+
+    def _step_discriminator(self, real_data: torch.Tensor, fake_data: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, float, float]:
+        """WGAN critic update step.
+
+        Critic loss = E[D(fake)] - E[D(real)] + lambda_gp * gradient_penalty
+        """
+        real_data = real_data.detach()
+        fake_data = fake_data.detach()
+
+        # Critic outputs (no sigmoid - raw scores)
+        d_real = self.discriminator(real_data)
+        d_fake = self.discriminator(fake_data)
+
+        # Wasserstein distance estimate (negative because we want to maximize)
+        # Critic wants: D(real) high, D(fake) low
+        # So critic loss = E[D(fake)] - E[D(real)]
+        wasserstein_dist = d_real.mean() - d_fake.mean()
+        critic_loss = -wasserstein_dist  # Minimize negative = maximize distance
+
+        # Gradient penalty
+        gp_lambda = getattr(self.cfg, 'gp_lambda', 10.0)  # Default lambda=10
+        gradient_penalty = self.compute_wgan_gradient_penalty(real_data, fake_data)
+
+        # Total critic loss
+        total_critic_loss = critic_loss + gp_lambda * gradient_penalty
+
+        # "Accuracy" metrics (for compatibility with logging)
+        # In WGAN, we use the sign of the output as a proxy
+        disc_acc_real = (d_real > 0).float().mean().item()
+        disc_acc_fake = (d_fake < 0).float().mean().item()
+
+        # Backward pass
+        self.generator.train()
+        self.discriminator_opt.zero_grad()
+        self.accelerator.backward(total_critic_loss * self.cfg.loss_coefficient_disc)
+        self.accelerator.clip_grad_norm_(
+            self.discriminator.parameters(),
+            self.cfg.max_grad_norm
+        )
+        self.discriminator_opt.step()
+        self.discriminator_scheduler.step()
+
+        return gradient_penalty.detach(), critic_loss.detach(), disc_acc_real, disc_acc_fake
+
+    def _step_generator(self, real_data: torch.Tensor, fake_data: torch.Tensor) -> tuple[torch.Tensor, float]:
+        """WGAN generator update step.
+
+        Generator loss = -E[D(fake)]
+        Generator wants critic to think fake samples are real (high scores).
+        """
+        # Get critic score for fake samples
+        d_fake = self.discriminator(fake_data)
+
+        # Generator wants to maximize D(fake), so minimize -D(fake)
+        gen_loss = -d_fake.mean()
+
+        # "Accuracy" metric (proxy)
+        gen_acc = (d_fake > 0).float().mean().item()
+
+        return gen_loss, gen_acc

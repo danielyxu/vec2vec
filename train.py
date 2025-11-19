@@ -17,7 +17,7 @@ from translators.Discriminator import Discriminator
 # from eval import eval_model
 from utils.collate import MultiencoderTokenizedDataset, TokenizedCollator
 from utils.eval_utils import EarlyStopper, eval_loop_
-from utils.gan import LeastSquaresGAN, RelativisticGAN, VanillaGAN
+from utils.gan import LeastSquaresGAN, RelativisticGAN, VanillaGAN, WassersteinGAN
 from utils.model_utils import get_sentence_embedding_dimension, load_encoder
 from utils.utils import *
 from utils.streaming_utils import load_streaming_embeddings, process_batch
@@ -476,6 +476,8 @@ def main():
         gan_cls = LeastSquaresGAN
     elif cfg.gan_style == "relativistic":
         gan_cls = RelativisticGAN
+    elif cfg.gan_style == "wgan":
+        gan_cls = WassersteinGAN
     else:
         raise ValueError(f"Unknown GAN style: {cfg.gan_style}")
     latent_gan = gan_cls(
