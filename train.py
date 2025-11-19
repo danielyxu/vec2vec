@@ -20,6 +20,7 @@ from utils.eval_utils import EarlyStopper, eval_loop_
 from utils.gan import LeastSquaresGAN, RelativisticGAN, VanillaGAN, WassersteinGAN
 from utils.model_utils import get_sentence_embedding_dimension, load_encoder
 from utils.utils import *
+from utils.utils import save_checkpoint, load_checkpoint
 from utils.streaming_utils import load_streaming_embeddings, process_batch
 from utils.train_utils import rec_loss_fn, trans_loss_fn, vsp_loss_fn, get_grad_norm
 from utils.wandb_logger import Logger
@@ -521,9 +522,26 @@ def main():
         early_stopper = EarlyStopper(patience=cfg.patience, min_delta=cfg.min_delta, increase=False)
         early_stopping = True
     else:
+        early_stopper = None
         early_stopping = False
 
-    for epoch in range(max_num_epochs):
+    # Load checkpoint if resume is enabled and checkpoint exists
+    start_epoch = 0
+    best_score = None
+    gans_list = [gan, sup_gan, latent_gan, similarity_gan]
+
+    if hasattr(cfg, 'resume') and cfg.resume:
+        start_epoch, best_score = load_checkpoint(
+            save_dir=save_dir,
+            translator=translator,
+            opt=opt,
+            scheduler=scheduler,
+            gans=gans_list,
+            accelerator=accelerator,
+            early_stopper=early_stopper,
+        )
+
+    for epoch in range(start_epoch, max_num_epochs):
         if use_val_set:
             with torch.no_grad(), accelerator.autocast():
                 translator.eval()
@@ -558,6 +576,7 @@ def main():
                     break
                 if early_stopper.counter == 0 and score < early_stopper.opt_val:
                     print(f"Saving model (counter = {early_stopper.counter})... {score} < {early_stopper.opt_val} is the best score so far...")
+                    best_score = score
                     save_everything(cfg, translator, opt, [gan, sup_gan, latent_gan, similarity_gan], save_dir)
 
         max_num_batches = None
@@ -584,6 +603,19 @@ def main():
             scheduler=scheduler,
             logger=logger,
             max_num_batches=max_num_batches
+        )
+
+        # Save checkpoint after each epoch
+        save_checkpoint(
+            save_dir=save_dir,
+            epoch=epoch,
+            translator=translator,
+            opt=opt,
+            scheduler=scheduler,
+            gans=gans_list,
+            accelerator=accelerator,
+            early_stopper=early_stopper,
+            best_score=best_score,
         )
 
     with open(save_dir + 'config.toml', 'w') as f:
