@@ -90,7 +90,21 @@ def contrastive_loss_fn(ins, translations, logger) -> torch.Tensor:
             count += 1
     return loss / count
 
-def vsp_loss_fn(ins, translations, logger) -> torch.Tensor:
+def vsp_loss_fn(ins, translations, logger, top_k=None) -> torch.Tensor:
+    """
+    Vector Set Preservation loss function.
+
+    Args:
+        ins: Input embeddings dictionary
+        translations: Translated embeddings dictionary
+        logger: Logger for metrics
+        top_k: If specified, only average the top-k pairs with highest errors
+               instead of averaging all pairs. This focuses training on the
+               hardest examples (hard negative mining).
+
+    Returns:
+        VSP loss tensor
+    """
     loss = None
     EPS = 1e-10
     count = 0
@@ -103,8 +117,30 @@ def vsp_loss_fn(ins, translations, logger) -> torch.Tensor:
             A = A / (A.norm(dim=1, keepdim=True) + EPS)
             out_sims = A @ A.T
             out_sims_reflected = A @ B.T
-            vsp_loss = (in_sims - out_sims).abs().mean()
-            vsp_loss_reflected = (in_sims - out_sims_reflected).abs().mean()
+
+            # Compute absolute differences
+            vsp_diff = (in_sims - out_sims).abs()
+            vsp_diff_reflected = (in_sims - out_sims_reflected).abs()
+
+            if top_k is not None and top_k > 0:
+                # Flatten and select top-k highest errors
+                vsp_diff_flat = vsp_diff.flatten()
+                vsp_diff_reflected_flat = vsp_diff_reflected.flatten()
+
+                # Clamp top_k to not exceed total number of elements
+                k = min(top_k, vsp_diff_flat.numel())
+
+                # Get top-k values
+                vsp_topk, _ = torch.topk(vsp_diff_flat, k)
+                vsp_reflected_topk, _ = torch.topk(vsp_diff_reflected_flat, k)
+
+                vsp_loss = vsp_topk.mean()
+                vsp_loss_reflected = vsp_reflected_topk.mean()
+            else:
+                # Original behavior: average all pairs
+                vsp_loss = vsp_diff.mean()
+                vsp_loss_reflected = vsp_diff_reflected.mean()
+
             if logger is not None:
                 logger.logkv(f"{in_name}_{out_name}_vsp", vsp_loss)
                 logger.logkv(f"{in_name}_{out_name}_vsp_reflected", vsp_loss_reflected)

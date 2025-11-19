@@ -123,10 +123,11 @@ def training_loop_(
             }
             reverse_rec_loss = rec_loss_fn(ins_reversed, translations_as_recons, logger, prefix="reverse_")
 
-            recons_as_translations = { 
-                in_name: { in_name: val } for in_name, val in recons.items() 
+            recons_as_translations = {
+                in_name: { in_name: val } for in_name, val in recons.items()
             }
-            vsp_loss = vsp_loss_fn(ins, recons_as_translations, logger)
+            vsp_top_k = getattr(cfg, 'vsp_top_k', None)
+            vsp_loss = vsp_loss_fn(ins, recons_as_translations, logger, top_k=vsp_top_k)
             if (cfg.loss_coefficient_cc_rec > 0) or (cfg.loss_coefficient_cc_trans > 0):
                 cc_ins = {}
                 for out_flag in translations.keys():
@@ -135,7 +136,7 @@ def training_loop_(
                 cc_recons, cc_translations = translator(cc_ins)
                 cc_rec_loss = rec_loss_fn(ins, cc_recons, logger, prefix="cc_")
                 cc_trans_loss = trans_loss_fn(ins, cc_translations, logger, prefix="cc_")
-                cc_vsp_loss = vsp_loss_fn(ins, cc_translations, logger)
+                cc_vsp_loss = vsp_loss_fn(ins, cc_translations, logger, top_k=vsp_top_k)
             else:
                 cc_rec_loss = torch.tensor(0.0)
                 cc_trans_loss = torch.tensor(0.0)
