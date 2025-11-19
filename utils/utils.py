@@ -160,3 +160,112 @@ def save_everything(cfg, translator, opt, gans, save_dir):
         torch.save(gan.discriminator_opt.state_dict(), os.path.join(save_dir, f'gan_opt_{i}.pt'))
     with open(os.path.join(save_dir, 'config.json'), 'w') as f:
         json.dump(cfg.__dict__, f)
+
+
+def save_checkpoint(
+    save_dir,
+    epoch,
+    translator,
+    opt,
+    scheduler,
+    gans,
+    accelerator,
+    early_stopper=None,
+    best_score=None,
+):
+    """Save a complete checkpoint for resuming training.
+
+    Args:
+        save_dir: Directory to save checkpoint
+        epoch: Current epoch number
+        translator: The translator model
+        opt: Optimizer for translator
+        scheduler: Learning rate scheduler
+        gans: List of GAN objects (each with discriminator, discriminator_opt, discriminator_scheduler)
+        accelerator: Accelerator instance for unwrapping models
+        early_stopper: Optional EarlyStopper instance
+        best_score: Optional best validation score
+    """
+    checkpoint = {
+        'epoch': epoch,
+        'translator_state_dict': accelerator.unwrap_model(translator).state_dict(),
+        'optimizer_state_dict': opt.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict(),
+        'best_score': best_score,
+    }
+
+    # Save early stopper state if present
+    if early_stopper is not None:
+        checkpoint['early_stopper'] = {
+            'counter': early_stopper.counter,
+            'opt_val': early_stopper.opt_val,
+        }
+
+    # Save discriminator states
+    for i, gan in enumerate(gans):
+        checkpoint[f'discriminator_{i}_state_dict'] = accelerator.unwrap_model(gan.discriminator).state_dict()
+        checkpoint[f'discriminator_opt_{i}_state_dict'] = gan.discriminator_opt.state_dict()
+        checkpoint[f'discriminator_scheduler_{i}_state_dict'] = gan.discriminator_scheduler.state_dict()
+
+    checkpoint_path = os.path.join(save_dir, 'checkpoint.pt')
+    torch.save(checkpoint, checkpoint_path)
+    print(f"Checkpoint saved at epoch {epoch} to {checkpoint_path}")
+
+
+def load_checkpoint(
+    save_dir,
+    translator,
+    opt,
+    scheduler,
+    gans,
+    accelerator,
+    early_stopper=None,
+):
+    """Load a checkpoint for resuming training.
+
+    Args:
+        save_dir: Directory containing checkpoint
+        translator: The translator model
+        opt: Optimizer for translator
+        scheduler: Learning rate scheduler
+        gans: List of GAN objects
+        accelerator: Accelerator instance
+        early_stopper: Optional EarlyStopper instance
+
+    Returns:
+        Tuple of (start_epoch, best_score) or (0, None) if no checkpoint found
+    """
+    checkpoint_path = os.path.join(save_dir, 'checkpoint.pt')
+
+    if not os.path.exists(checkpoint_path):
+        print(f"No checkpoint found at {checkpoint_path}")
+        return 0, None
+
+    print(f"Loading checkpoint from {checkpoint_path}")
+    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+
+    # Load translator state
+    accelerator.unwrap_model(translator).load_state_dict(checkpoint['translator_state_dict'])
+
+    # Load optimizer and scheduler states
+    opt.load_state_dict(checkpoint['optimizer_state_dict'])
+    scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
+    # Load discriminator states
+    for i, gan in enumerate(gans):
+        accelerator.unwrap_model(gan.discriminator).load_state_dict(
+            checkpoint[f'discriminator_{i}_state_dict']
+        )
+        gan.discriminator_opt.load_state_dict(checkpoint[f'discriminator_opt_{i}_state_dict'])
+        gan.discriminator_scheduler.load_state_dict(checkpoint[f'discriminator_scheduler_{i}_state_dict'])
+
+    # Load early stopper state if present
+    if early_stopper is not None and 'early_stopper' in checkpoint:
+        early_stopper.counter = checkpoint['early_stopper']['counter']
+        early_stopper.opt_val = checkpoint['early_stopper']['opt_val']
+
+    epoch = checkpoint['epoch']
+    best_score = checkpoint.get('best_score', None)
+
+    print(f"Resumed from epoch {epoch}, best_score: {best_score}")
+    return epoch + 1, best_score  # Return next epoch to train
