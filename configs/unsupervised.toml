@@ -49,6 +49,17 @@ patience = 20
 min_delta = 0.0
 min_epochs = 80
 
+# VSP (Vector Space Preservation) mode options:
+# - 'pairwise': Original - preserves pairwise dot product similarities
+# - 'triplet_angle': Preserves angles between triplets of vectors
+# - 'tetrahedron': Preserves volumes of tetrahedra formed by 4 points
+# - 'combined': All three modes combined
+vsp_mode = 'pairwise'
+vsp_triplet_coeff = 1.0      # Weight for triplet angle loss
+vsp_tetra_coeff = 1.0        # Weight for tetrahedron volume loss
+vsp_num_triplets = 256       # Number of triplets to sample per batch
+vsp_num_tetrahedra = 128     # Number of tetrahedra to sample per batch
+
 
 [gan]
 disc_lr = 1e-5

@@ -122,10 +122,24 @@ def training_loop_(
             }
             reverse_rec_loss = rec_loss_fn(ins_reversed, translations_as_recons, logger, prefix="reverse_")
 
-            recons_as_translations = { 
-                in_name: { in_name: val } for in_name, val in recons.items() 
+            recons_as_translations = {
+                in_name: { in_name: val } for in_name, val in recons.items()
             }
-            vsp_loss = vsp_loss_fn(ins, recons_as_translations, logger)
+            # Get VSP config parameters with defaults
+            vsp_mode = getattr(cfg, 'vsp_mode', 'pairwise')
+            vsp_triplet_coeff = getattr(cfg, 'vsp_triplet_coeff', 1.0)
+            vsp_tetra_coeff = getattr(cfg, 'vsp_tetra_coeff', 1.0)
+            vsp_num_triplets = getattr(cfg, 'vsp_num_triplets', 256)
+            vsp_num_tetrahedra = getattr(cfg, 'vsp_num_tetrahedra', 128)
+
+            vsp_loss = vsp_loss_fn(
+                ins, recons_as_translations, logger,
+                vsp_mode=vsp_mode,
+                vsp_triplet_coeff=vsp_triplet_coeff,
+                vsp_tetra_coeff=vsp_tetra_coeff,
+                vsp_num_triplets=vsp_num_triplets,
+                vsp_num_tetrahedra=vsp_num_tetrahedra
+            )
             if (cfg.loss_coefficient_cc_rec > 0) or (cfg.loss_coefficient_cc_trans > 0):
                 cc_ins = {}
                 for out_flag in translations.keys():
@@ -134,7 +148,14 @@ def training_loop_(
                 cc_recons, cc_translations = translator(cc_ins)
                 cc_rec_loss = rec_loss_fn(ins, cc_recons, logger, prefix="cc_")
                 cc_trans_loss = trans_loss_fn(ins, cc_translations, logger, prefix="cc_")
-                cc_vsp_loss = vsp_loss_fn(ins, cc_translations, logger)
+                cc_vsp_loss = vsp_loss_fn(
+                    ins, cc_translations, logger,
+                    vsp_mode=vsp_mode,
+                    vsp_triplet_coeff=vsp_triplet_coeff,
+                    vsp_tetra_coeff=vsp_tetra_coeff,
+                    vsp_num_triplets=vsp_num_triplets,
+                    vsp_num_tetrahedra=vsp_num_tetrahedra
+                )
             else:
                 cc_rec_loss = torch.tensor(0.0)
                 cc_trans_loss = torch.tensor(0.0)
